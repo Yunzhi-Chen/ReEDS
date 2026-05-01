@@ -2,7 +2,7 @@
 #
 # Purpose:
 #   1. Check upstream ReEDS on a schedule.
-#   2. Fast-forward this fork's main branch when upstream/main has new commits.
+#   2. Rebase fork-only automation commits on top of upstream/main when upstream changes.
 #   3. Trigger the separate "Update ReEDS-GPT Index" workflow through the resulting push.
 #
 # Required GitHub Secret:
@@ -11,10 +11,9 @@
 #
 # Notes:
 #   - Do NOT use the default GITHUB_TOKEN if you want this push to trigger
-#     another workflow. GitHub suppresses most workflow-triggering events
-#     created by GITHUB_TOKEN to avoid recursive workflow runs.
-#   - Keep your fork's main branch clean and aligned with upstream/main.
-#     Put your own development work on separate branches.
+#     another workflow.
+#   - This workflow assumes your fork's main may contain fork-only commits,
+#     such as GitHub Actions files that are not present in upstream ReEDS.
 
 name: Sync Fork with Upstream ReEDS
 
@@ -33,7 +32,6 @@ permissions:
   contents: write
 
 env:
-  # Change this if the official upstream repo URL is different.
   UPSTREAM_REPO: https://github.com/NREL/ReEDS-2.0.git
   UPSTREAM_BRANCH: main
   FORK_BRANCH: main
@@ -56,13 +54,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Add upstream remote
+      - name: Add upstream remote and fetch branches
         run: |
           git remote add upstream "$UPSTREAM_REPO"
           git fetch upstream "$UPSTREAM_BRANCH"
           git fetch origin "$FORK_BRANCH"
 
-      - name: Check whether upstream has new commits
+      - name: Check whether fork already contains latest upstream
         id: check
         run: |
           LOCAL_SHA="$(git rev-parse origin/$FORK_BRANCH)"
@@ -71,25 +69,31 @@ jobs:
           echo "local_sha=$LOCAL_SHA" >> "$GITHUB_OUTPUT"
           echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
 
-          if [ "$LOCAL_SHA" = "$UPSTREAM_SHA" ]; then
+          # If upstream/main is already an ancestor of origin/main,
+          # then the fork already contains the latest upstream commit.
+          if git merge-base --is-ancestor "upstream/$UPSTREAM_BRANCH" "origin/$FORK_BRANCH"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Fork is already up to date with upstream."
+            echo "Fork already contains latest upstream commit."
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "Upstream has new commits."
-            echo "Local:    $LOCAL_SHA"
+            echo "Upstream has new commits not yet in the fork."
+            echo "Fork:     $LOCAL_SHA"
             echo "Upstream: $UPSTREAM_SHA"
           fi
 
-      - name: Fast-forward fork main to upstream main
+      - name: Rebase fork main on upstream main
         if: steps.check.outputs.changed == 'true'
         run: |
           git checkout "$FORK_BRANCH"
-          git merge --ff-only "upstream/$UPSTREAM_BRANCH"
-          git push origin "$FORK_BRANCH"
+
+          # Rebase fork-only commits, such as workflow files, on top of upstream/main.
+          git rebase "upstream/$UPSTREAM_BRANCH"
+
+          # Rebase rewrites fork-only commit SHAs, so force-with-lease is needed.
+          git push --force-with-lease origin "$FORK_BRANCH"
 
       - name: Summary
         run: |
-          echo "Local before sync: ${{ steps.check.outputs.local_sha }}"
-          echo "Upstream:          ${{ steps.check.outputs.upstream_sha }}"
-          echo "Changed:           ${{ steps.check.outputs.changed }}"
+          echo "Fork before sync: ${{ steps.check.outputs.local_sha }}"
+          echo "Upstream:         ${{ steps.check.outputs.upstream_sha }}"
+          echo "Changed:          ${{ steps.check.outputs.changed }}"
