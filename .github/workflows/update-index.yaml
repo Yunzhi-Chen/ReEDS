@@ -66,8 +66,11 @@ jobs:
             langchain-community \
             langchain-google-genai \
             faiss-cpu \
-            tqdm \
-            git-restore-mtime
+            tqdm
+
+      - name: Install git-restore-mtime
+        run: |
+          sudo apt-get install -y -qq git-restore-mtime
 
       # ── Restore file timestamps for incremental skip logic ───────
       - name: Restore file modification times from git
