@@ -7,11 +7,13 @@
 #
 # Required GitHub Secret:
 #   FORK_SYNC_TOKEN - Personal access token or GitHub App token with contents:write
-#                     permission for this fork.
+#                     and workflow permission for this fork.
 #
 # Notes:
 #   - Do NOT use the default GITHUB_TOKEN if you want this push to trigger
 #     another workflow.
+#   - This workflow disables Git LFS smudge so the runner does not try to
+#     download large LFS files such as .h5 files during checkout/rebase.
 #   - This workflow assumes your fork's main may contain fork-only commits,
 #     such as GitHub Actions files that are not present in upstream ReEDS.
 
@@ -35,24 +37,31 @@ env:
   UPSTREAM_REPO: https://github.com/NREL/ReEDS-2.0.git
   UPSTREAM_BRANCH: main
   FORK_BRANCH: main
+  GIT_LFS_SKIP_SMUDGE: "1"
 
 jobs:
   sync:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout fork
+      - name: Checkout fork without LFS objects
         uses: actions/checkout@v4
         with:
           ref: ${{ env.FORK_BRANCH }}
           fetch-depth: 0
           token: ${{ secrets.FORK_SYNC_TOKEN }}
           persist-credentials: true
+          lfs: false
 
-      - name: Configure git identity
+      - name: Configure git identity and disable LFS smudge
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git lfs install --skip-smudge
+          git config --local filter.lfs.smudge "git-lfs smudge --skip -- %f"
+          git config --local filter.lfs.process "git-lfs filter-process --skip"
+          git config --local filter.lfs.required false
 
       - name: Add upstream remote and fetch branches
         run: |
@@ -87,6 +96,7 @@ jobs:
           git checkout "$FORK_BRANCH"
 
           # Rebase fork-only commits, such as workflow files, on top of upstream/main.
+          # LFS smudge is disabled, so large LFS objects are not downloaded.
           git rebase "upstream/$UPSTREAM_BRANCH"
 
           # Rebase rewrites fork-only commit SHAs, so force-with-lease is needed.
