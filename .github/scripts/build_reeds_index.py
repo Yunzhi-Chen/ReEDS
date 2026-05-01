@@ -240,7 +240,18 @@ def make_splitter(ext: str) -> RecursiveCharacterTextSplitter:
             separators=["\n## ", "\n### ", "\n#### ", "\n\n", "\n", " ", ""],
         )
 
-    if ext in {".csv", ".yaml", ".yml"}:
+    if ext in {
+        ".csv",
+        ".tsv",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".opt",
+        ".op2",
+    }:
         return RecursiveCharacterTextSplitter(
             chunk_size=min(CHUNK_SIZE, 800),
             chunk_overlap=min(CHUNK_OVERLAP, 120),
