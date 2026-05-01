@@ -14,6 +14,8 @@
 #     another workflow.
 #   - This workflow disables Git LFS smudge so the runner does not try to
 #     download large LFS files such as .h5 files.
+#   - This workflow allows incomplete LFS push because the runner intentionally
+#     does not download large LFS objects.
 #   - This workflow intentionally force-pushes main to keep it aligned with
 #     upstream/main plus fork-only automation files.
 #   - Keep personal development work on separate branches, not main.
@@ -63,6 +65,7 @@ jobs:
           git config --local filter.lfs.smudge "git-lfs smudge --skip -- %f"
           git config --local filter.lfs.process "git-lfs filter-process --skip"
           git config --local filter.lfs.required false
+          git config --local lfs.allowincompletepush true
 
       - name: Add upstream remote and fetch branches
         run: |
@@ -126,7 +129,7 @@ jobs:
       - name: Push updated fork main
         if: steps.reconstruct.outputs.changed == 'true'
         run: |
-          git push --force-with-lease origin "$FORK_BRANCH"
+          git -c lfs.allowincompletepush=true push --force-with-lease origin "$FORK_BRANCH"
 
       - name: Summary
         run: |
