@@ -81,8 +81,6 @@ EXCLUDE_DIRS = {
     "output",
     "runs",
     "run",
-    "Augur",
-    "ReEDS_Augur",
 }
 
 EXCLUDE_PATH_SUBSTR: set[str] = set()
