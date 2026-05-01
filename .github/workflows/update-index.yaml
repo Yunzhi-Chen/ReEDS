@@ -1,6 +1,6 @@
-# Rebuild the FAISS vector index used by ReEDS-GPT whenever code changes land
-# on main.  Incremental builds re-embed only changed files (~$0.10 vs $10).
-# Monthly cron does a full rebuild to catch drift.
+# Rebuild the FAISS vector index used by ReEDS-GPT whenever changes land
+# on main. Incremental builds re-embed only changed files.
+# Monthly cron does a full rebuild to catch stale chunks / drift.
 #
 # Required GitHub Secrets:
 #   GCP_SA_KEY      – Service-account JSON with roles:
@@ -13,12 +13,6 @@ name: Update ReEDS-GPT Index
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "*.md"
-      - "LICENSE"
-      - ".gitignore"
-      - "reeds_copilot/**"
 
   schedule:
     # Full rebuild on the 1st of every month at 06:00 UTC
@@ -27,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       full_rebuild:
-        description: "Force a full (non-incremental) rebuild"
+        description: "Force a full non-incremental rebuild"
         type: boolean
         default: false
 
@@ -47,14 +41,17 @@ env:
 jobs:
   build-and-upload:
     runs-on: ubuntu-latest
+
     steps:
       # ── Checkout ──────────────────────────────────────────────────
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0          # full history needed by git-restore-mtime
+          fetch-depth: 0
 
       # ── Python ────────────────────────────────────────────────────
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -68,14 +65,6 @@ jobs:
             faiss-cpu \
             tqdm
 
-      - name: Install git-restore-mtime
-        run: |
-          sudo apt-get install -y -qq git-restore-mtime
-
-      # ── Restore file timestamps for incremental skip logic ───────
-      - name: Restore file modification times from git
-        run: git restore-mtime
-
       # ── GCP Auth ──────────────────────────────────────────────────
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
@@ -85,11 +74,11 @@ jobs:
       - name: Set up gcloud CLI
         uses: google-github-actions/setup-gcloud@v2
 
-      # ── Download previous index (incremental only) ───────────────
+      # ── Download previous index for incremental build ─────────────
       - name: Download existing index from GCS
         if: >-
           github.event_name != 'schedule'
-          && github.event.inputs.full_rebuild != 'true'
+          && !(github.event_name == 'workflow_dispatch' && inputs.full_rebuild)
         run: |
           mkdir -p reeds_index
           gsutil -m cp \
@@ -99,7 +88,7 @@ jobs:
             reeds_index/ \
           || echo "::warning::No existing index in GCS – will build from scratch"
 
-      # ── Build index ──────────────────────────────────────────────
+      # ── Build index ───────────────────────────────────────────────
       - name: Build FAISS index
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -107,12 +96,12 @@ jobs:
           REEDS_INDEX_DIR: ${{ github.workspace }}/reeds_index
           REEDS_EMBED_MODEL: "gemini:gemini-embedding-001"
           REEDS_INCREMENTAL: >-
-            ${{ (github.event_name == 'schedule' || github.event.inputs.full_rebuild == 'true') && '0' || '1' }}
+            ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_rebuild)) && '0' || '1' }}
           REEDS_SKIP_UNCHANGED: >-
-            ${{ (github.event_name == 'schedule' || github.event.inputs.full_rebuild == 'true') && '0' || '1' }}
+            ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_rebuild)) && '0' || '1' }}
         run: python .github/scripts/build_reeds_index.py
 
-      # ── Upload to GCS ────────────────────────────────────────────
+      # ── Upload fresh index to GCS ─────────────────────────────────
       - name: Upload index to GCS
         run: |
           gsutil -m cp \
@@ -121,7 +110,7 @@ jobs:
             reeds_index/manifest.json \
             "gs://$GCS_BUCKET/"
 
-      # ── Restart Cloud Run so it loads the fresh index ────────────
+      # ── Restart Cloud Run so it loads the fresh index ─────────────
       - name: Restart Cloud Run service
         run: |
           gcloud run services update "$CLOUD_RUN_SERVICE" \
