@@ -1,0 +1,95 @@
+# Sync this fork's main branch with the upstream ReEDS repository.
+#
+# Purpose:
+#   1. Check upstream ReEDS on a schedule.
+#   2. Fast-forward this fork's main branch when upstream/main has new commits.
+#   3. Trigger the separate "Update ReEDS-GPT Index" workflow through the resulting push.
+#
+# Required GitHub Secret:
+#   FORK_SYNC_TOKEN - Personal access token or GitHub App token with contents:write
+#                     permission for this fork.
+#
+# Notes:
+#   - Do NOT use the default GITHUB_TOKEN if you want this push to trigger
+#     another workflow. GitHub suppresses most workflow-triggering events
+#     created by GITHUB_TOKEN to avoid recursive workflow runs.
+#   - Keep your fork's main branch clean and aligned with upstream/main.
+#     Put your own development work on separate branches.
+
+name: Sync Fork with Upstream ReEDS
+
+on:
+  schedule:
+    # Check upstream every day at 08:00 UTC
+    - cron: "0 8 * * *"
+
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream-reeds
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  # Change this if the official upstream repo URL is different.
+  UPSTREAM_REPO: https://github.com/NREL/ReEDS-2.0.git
+  UPSTREAM_BRANCH: main
+  FORK_BRANCH: main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FORK_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.FORK_SYNC_TOKEN }}
+          persist-credentials: true
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch upstream "$UPSTREAM_BRANCH"
+          git fetch origin "$FORK_BRANCH"
+
+      - name: Check whether upstream has new commits
+        id: check
+        run: |
+          LOCAL_SHA="$(git rev-parse origin/$FORK_BRANCH)"
+          UPSTREAM_SHA="$(git rev-parse upstream/$UPSTREAM_BRANCH)"
+
+          echo "local_sha=$LOCAL_SHA" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+
+          if [ "$LOCAL_SHA" = "$UPSTREAM_SHA" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Fork is already up to date with upstream."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Upstream has new commits."
+            echo "Local:    $LOCAL_SHA"
+            echo "Upstream: $UPSTREAM_SHA"
+          fi
+
+      - name: Fast-forward fork main to upstream main
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git checkout "$FORK_BRANCH"
+          git merge --ff-only "upstream/$UPSTREAM_BRANCH"
+          git push origin "$FORK_BRANCH"
+
+      - name: Summary
+        run: |
+          echo "Local before sync: ${{ steps.check.outputs.local_sha }}"
+          echo "Upstream:          ${{ steps.check.outputs.upstream_sha }}"
+          echo "Changed:           ${{ steps.check.outputs.changed }}"
