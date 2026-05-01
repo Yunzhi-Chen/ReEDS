@@ -65,22 +65,53 @@ INCLUDE_EXT = {
     ".md",
     ".rst",
     ".txt",
+    ".tex",
     ".py",
+    ".sh",
+    ".bat",
+    ".ps1",
     ".gms",
+    ".inc",
+    ".dat",
+    ".opt",
+    ".op2",
     ".csv",
+    ".tsv",
+    ".json",
     ".yaml",
     ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".r",
+    ".jl",
+    ".sql",
+}
+
+INCLUDE_FILENAMES = {
+    "Makefile",
+    "Dockerfile",
+    "Snakefile",
+    "README",
+    "CHANGELOG",
+    "CITATION",
+    "LICENSE",
 }
 
 EXCLUDE_DIRS = {
     ".git",
-    ".github",
     "__pycache__",
     ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".ipynb_checkpoints",
     "outputs",
     "output",
     "runs",
     "run",
+    "lstfiles",
+    "g00files",
+    "ReEDS_Augur_output",
 }
 
 EXCLUDE_PATH_SUBSTR: set[str] = set()
@@ -161,7 +192,9 @@ def iter_files(repo: Path) -> Iterable[Path]:
             continue
 
         ext = p.suffix.lower()
-        if ext not in INCLUDE_EXT:
+        name = p.name
+
+        if ext not in INCLUDE_EXT and name not in INCLUDE_FILENAMES:
             continue
 
         if any(part in EXCLUDE_DIRS for part in p.parts):
@@ -435,6 +468,7 @@ def main() -> None:
         "created_utc": int(time.time()),
         "embed_model": embed_name,
         "include_ext": sorted(INCLUDE_EXT),
+        "include_filenames": sorted(INCLUDE_FILENAMES),
         "exclude_dirs": sorted(EXCLUDE_DIRS),
         "chunk_size": CHUNK_SIZE,
         "chunk_overlap": CHUNK_OVERLAP,
