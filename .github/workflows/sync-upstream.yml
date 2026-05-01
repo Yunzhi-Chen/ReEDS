@@ -15,7 +15,7 @@
 #   - This workflow disables Git LFS smudge so the runner does not try to
 #     download large LFS files such as .h5 files.
 #   - This workflow intentionally force-pushes main to keep it aligned with
-#     upstream/main plus the automation files listed below.
+#     upstream/main plus fork-only automation files.
 #   - Keep personal development work on separate branches, not main.
 
 name: Sync Fork with Upstream ReEDS
@@ -75,14 +75,16 @@ jobs:
           mkdir -p /tmp/fork-automation/.github/workflows
           mkdir -p /tmp/fork-automation/.github/scripts
 
-          cp .github/workflows/sync-upstream.yml \
-             /tmp/fork-automation/.github/workflows/sync-upstream.yml
+          # Save all fork workflow files regardless of exact filename:
+          # sync-upstream.yml, update-index.yaml, cache.yaml, python-app.yaml, etc.
+          if [ -d ".github/workflows" ]; then
+            cp -R .github/workflows/. /tmp/fork-automation/.github/workflows/
+          fi
 
-          cp .github/workflows/update-index.yml \
-             /tmp/fork-automation/.github/workflows/update-index.yml
-
-          cp .github/scripts/build_reeds_index.py \
-             /tmp/fork-automation/.github/scripts/build_reeds_index.py
+          # Save fork-only scripts if present.
+          if [ -d ".github/scripts" ]; then
+            cp -R .github/scripts/. /tmp/fork-automation/.github/scripts/
+          fi
 
       - name: Reconstruct main from upstream plus automation files
         id: reconstruct
@@ -103,18 +105,15 @@ jobs:
           mkdir -p .github/workflows
           mkdir -p .github/scripts
 
-          cp /tmp/fork-automation/.github/workflows/sync-upstream.yml \
-             .github/workflows/sync-upstream.yml
+          if [ -d "/tmp/fork-automation/.github/workflows" ]; then
+            cp -R /tmp/fork-automation/.github/workflows/. .github/workflows/
+          fi
 
-          cp /tmp/fork-automation/.github/workflows/update-index.yml \
-             .github/workflows/update-index.yml
+          if [ -d "/tmp/fork-automation/.github/scripts" ]; then
+            cp -R /tmp/fork-automation/.github/scripts/. .github/scripts/
+          fi
 
-          cp /tmp/fork-automation/.github/scripts/build_reeds_index.py \
-             .github/scripts/build_reeds_index.py
-
-          git add .github/workflows/sync-upstream.yml \
-                  .github/workflows/update-index.yml \
-                  .github/scripts/build_reeds_index.py
+          git add .github/workflows .github/scripts
 
           if git diff --cached --quiet && [ "$BEFORE_SHA" = "$UPSTREAM_SHA" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
