@@ -19,8 +19,9 @@ Environment variables (all optional, sensible defaults):
     REEDS_EMBED_MODEL      gemini:gemini-embedding-001 | hf:BAAI/bge-base-en-v1.5 | ollama:nomic-embed-text
     REEDS_INCREMENTAL      1 = append to existing index  (default 1)
     REEDS_SKIP_UNCHANGED   1 = skip files whose signature matches manifest  (default 1)
-    REEDS_EMBED_BATCH      Batch size for embedding calls  (default 64)
+    REEDS_EMBED_BATCH      Batch size for embedding calls  (default 16)
     REEDS_EMBED_DEVICE     e.g. "cuda" for HuggingFace GPU
+    REEDS_EMBED_DELAY      Seconds between batches to avoid rate limits (default 1.0)
     GOOGLE_API_KEY         Required when using gemini: embeddings
 """
 
@@ -42,10 +43,11 @@ from langchain_community.vectorstores import FAISS
 # 1) Configuration (env-driven)
 # ---------------------------------------------------------------------------
 DEFAULT_EMBED_MODEL = os.environ.get("REEDS_EMBED_MODEL", "gemini:gemini-embedding-001")
-EMBED_BATCH_SIZE = int(os.environ.get("REEDS_EMBED_BATCH", "64"))
+EMBED_BATCH_SIZE = int(os.environ.get("REEDS_EMBED_BATCH", "16"))
 MAX_FILE_BYTES = int(os.environ.get("REEDS_MAX_FILE_BYTES", str(5_000_000)))
 INCREMENTAL = os.environ.get("REEDS_INCREMENTAL", "1") == "1"
 SKIP_UNCHANGED = os.environ.get("REEDS_SKIP_UNCHANGED", "1") == "1"
+EMBED_DELAY = float(os.environ.get("REEDS_EMBED_DELAY", "1.0"))  # seconds between batches
 
 INCLUDE_EXT = {".md", ".rst", ".txt", ".py", ".gms", ".csv", ".yaml", ".yml"}
 EXCLUDE_DIRS = {
@@ -230,6 +232,32 @@ def batched(items: List[Document], batch_size: int) -> Iterable[List[Document]]:
 
 
 # ---------------------------------------------------------------------------
+# 6b) Retry wrapper for rate-limited embedding APIs
+# ---------------------------------------------------------------------------
+def _embed_with_retry(
+    vectordb: Optional[FAISS], batch: List[Document], embeddings, max_retries: int = 5
+) -> FAISS:
+    """Embed a batch with exponential backoff on rate-limit (429) errors."""
+    delay = 30  # initial wait in seconds
+    for attempt in range(max_retries):
+        try:
+            if vectordb is None:
+                return FAISS.from_documents(batch, embeddings, normalize_L2=True)
+            else:
+                vectordb.add_documents(batch)
+                return vectordb
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                wait = delay * (2 ** attempt)
+                print(f"\n  Rate limited (attempt {attempt+1}/{max_retries}). Waiting {wait}s...")
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError(f"Failed after {max_retries} retries due to rate limiting.")
+
+
+# ---------------------------------------------------------------------------
 # 7) Main pipeline
 # ---------------------------------------------------------------------------
 def main():
@@ -325,10 +353,8 @@ def main():
             c.metadata["chunk_sha1"] = sha1_bytes(content_bytes[:20000])
 
         for batch in batched(chunks, EMBED_BATCH_SIZE):
-            if vectordb is None:
-                vectordb = FAISS.from_documents(batch, embeddings, normalize_L2=True)
-            else:
-                vectordb.add_documents(batch)
+            vectordb = _embed_with_retry(vectordb, batch, embeddings)
+            time.sleep(EMBED_DELAY)  # avoid hitting rate limits
 
         total_chunks += len(chunks)
         indexed_files += 1
